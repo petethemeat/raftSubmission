@@ -47,6 +47,7 @@ public class Server
 	
 	private static final int minTimeOut = 6000;
 	private static final int maxTimeOut = 10000;
+	public static int counter = 0;
 	
 	
 	
@@ -156,16 +157,21 @@ public class Server
 					tcpOutput.close();
 
 					sc.close();
+					dataSocket.close();
+
 				}
 				
 				//handles requests for votes
 				else if(token.equals("requestVote"))
 				{
 					String message = handleRequest(sc);
+					System.out.println(message);
 					tcpOutput.flush();
 					tcpOutput.println(message);
 					tcpOutput.close();
 					sc.close();
+					dataSocket.close();
+
 				}
 				
 				//handles client requests
@@ -177,12 +183,12 @@ public class Server
 						tcpOutput.println("fail " + leaderId.toString());
 						continue;
 					}
-
-					handleClient(sc);
+					String client = sc.nextLine();
+					System.out.println("Client's response: " + client + "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nok");
+					handleClient(client); //FIXME: server only stores the first word of the client's request
 					append(dataSocket);
 					System.out.println("Append succeeded");
 					
-					sc.close();
 				}
 				
 				//check to see if candidate is now leader
@@ -191,7 +197,7 @@ public class Server
 					//Majority of votes?
 					if(votes > connections.size()/2){
 						role = Role.leader;
-						
+						counter = 0;
 						//initialization for matchindex and next index 
 						matchIndex = new ArrayList<Integer>();
 						nextIndex = new ArrayList<Integer>();
@@ -201,11 +207,11 @@ public class Server
 							nextIndex.add(log.size());
 						}
 						//Call and empty heart beat
+						
 						append(null);
 						System.out.println(" ");
 					}
 				}
-				dataSocket.close();
 				
 
 			}
@@ -240,6 +246,7 @@ public class Server
 					System.out.println(votes);
 					if(votes > connections.size()/2){
 						role = Role.leader;
+						counter = 0;
 						System.out.println("I'm the leader");
 						//initialization for matchindex and next index 
 						matchIndex = new ArrayList<Integer>();
@@ -287,7 +294,10 @@ public class Server
 		System.out.println("I'm sending a heartbeat");
 		//index of most recently
 		int localIndex = nextIndex.get(myId) - 1;
-		for(int i =0; i < connections.size(); i++)
+		
+		counter++;
+
+		for(int i = 0; i < connections.size(); i++)
 		{
 			if(i == myId) continue;
 			
@@ -297,13 +307,15 @@ public class Server
 			Connection currentConnection = connections.get(i);
 			
 			//start append RPC
+			if(log.size() <= currentIndex){
+				currentIndex  = currentIndex;
+			}
 			Append current = new Append(currentTerm, myId, currentIndex, log.get(currentIndex).term, commitIndex, log, 
-					currentConnection.ip, currentConnection.port, i, dataSocket, localIndex);
+					currentConnection.ip, currentConnection.port, i, dataSocket, localIndex, counter);
 			Thread t = new Thread(current);
 			t.start();
 			
 		}
-		System.out.println("Done sending append messages");
 	}
 	
 	private static String handleAppend(Scanner sc)
@@ -312,7 +324,10 @@ public class Server
 		System.out.println("I received a heartbeat");
 		
 		int term = Integer.parseInt(sc.next());
-		if(term < currentTerm) return "false " + currentTerm.toString(); //Message sent from out of date leader
+		if(term < currentTerm) {
+			System.out.println("Received term too low");
+			return "false " + currentTerm.toString(); //Message sent from out of date leader
+		}
 		
 		int leader = Integer.parseInt(sc.next()); //Message sent from new term
 		if(term >= currentTerm)
@@ -320,21 +335,30 @@ public class Server
 			updateTerm(term);
 			leaderId = leader;
 		}
-		
-		int prevTerm = Integer.parseInt(sc.next());
+
 		int prevIndex = Integer.parseInt(sc.next());
+		int prevTerm = Integer.parseInt(sc.next());
 		
 		//Message sent is much to far ahead
-		if(prevIndex >= log.size()) return "false " + currentTerm.toString();
+		if (prevIndex >= log.size())  {
+			System.out.println("prevLogIndex: " + prevIndex + " too big");
+			return "false " + currentTerm.toString();
+		}
 		
 		//Message has wrong term in prevIndex
-		if((log.get(prevIndex).term != prevTerm)) return "false " + currentTerm.toString(); 
-		
+		if ((log.get(prevIndex).term != prevTerm) && prevIndex != 0) {
+			for (int i = prevIndex; i < log.size(); i++) {
+				log.remove(prevIndex);
+			}
+
+			System.out.println("Terms different at same index");
+			return "false " + currentTerm.toString(); 
+		}
 		
 		int leaderCommit = Integer.parseInt(sc.next());
 		
 		int currentIndex = prevIndex + 1;
-		if(sc.hasNext())	//Is there anything to append?
+		while (sc.hasNext())	//Is there anything to append?
 		{
 			String[] tokens = sc.next().split(";");
 			LogEntry newEntry = new LogEntry(Integer.parseInt(tokens[0]), tokens[1]);
@@ -356,7 +380,8 @@ public class Server
 		{
 			commitIndex = Math.min(leaderCommit, currentIndex);
 		}
-		
+
+		System.out.println("Append succeeded");
 		return "true " + currentTerm.toString();
 				
 	}
@@ -367,7 +392,7 @@ public class Server
 	private static void request()
 	{
 		System.out.println("I'm sending vote requests");
-		for(int i =0; i < connections.size(); i++)
+		for(int i = 0; i < connections.size(); i++)
 		{
 			if(i == myId) continue;
 			
@@ -377,7 +402,7 @@ public class Server
 			RequestVote current = new RequestVote(currentTerm, myId, lastLogIndex, log.get(lastLogIndex).term, 
 						currentConnection.port, currentConnection.ip);
 			Thread t = new Thread(current);
-			t.start();			
+			t.start();
 		}
 	}
 	
@@ -397,13 +422,15 @@ public class Server
 			updateTerm(term);
 		}
 		int candidateId = Integer.parseInt(sc.next());
-		int prevTerm = Integer.parseInt(sc.next());
 		int prevIndex = Integer.parseInt(sc.next());
+		int prevTerm = Integer.parseInt(sc.next());
 		
 		//Message sent does not line up with current log
-		if(log.get(prevIndex).term != prevTerm) return "false " + currentTerm.toString(); 
+		if (prevTerm < log.get(log.size() - 1).term || (prevTerm == log.get(log.size() - 1).term) && prevIndex < log.size() - 1) 
+			return "false " + currentTerm.toString(); 
+//		if(prevIndex >= log.size() || log.get(prevIndex).term != prevTerm) return "false " + currentTerm.toString(); 
 		
-		if(votedFor == null)
+		if (votedFor == null)
 		{
 			updateTerm(term);
 			votedFor = candidateId;
@@ -416,12 +443,14 @@ public class Server
 	/*
 	 * This method handles new messages from clients
 	 */
-	private static void handleClient(Scanner sc)
+	private static void handleClient(String message)
 	{
-		log.add(new LogEntry(currentTerm, sc.next()));
+		log.add(new LogEntry(currentTerm, message.trim().replaceAll(" ", ":")));
 		//Setting personal next index. This is used to reference where the log should be replicated to.
 		
-		nextIndex.set(myId, nextIndex.get(myId) + 1);
+		int next = nextIndex.get(myId);
+		matchIndex.set(myId, next);
+		nextIndex.set(myId, next + 1);
 	}
 	
 	
@@ -441,11 +470,13 @@ public class Server
 		{
 			Server.nextIndex.set(recipientId, localIndex + 1);
 			Server.matchIndex.set(recipientId, localIndex);
+			return;
 		}
 		else
 		{
 			int currentIndex = Server.nextIndex.get(recipientId);
 			Server.nextIndex.set(recipientId, currentIndex - 1);
+			return;
 		}
 	
 	}
@@ -453,9 +484,13 @@ public class Server
 	public static synchronized Boolean checkForCommit(Integer localIndex)
 	{
 		int count = 0;
-		for(Integer index : Server.matchIndex) if(index == localIndex) count++;
+		for (Integer index : Server.matchIndex){
+			if(index == localIndex){
+				count++;
+			}
+		}
 		
-		if(count == connections.size()/2 + 1)
+		if (count >= connections.size()/2 + 1)
 		{
 			
 			commitIndex = localIndex;
@@ -464,14 +499,12 @@ public class Server
 		
 		return false;
 	}
+	
 	public static synchronized void updateVotes(Boolean result)
 	{
 		if(result) votes++;
 		System.out.println("Votes: " + votes);
 	}
-	
-	
-	
 	
 	/*
 	 * Code for running the statemachine
@@ -495,17 +528,24 @@ public class Server
 				break;
 			case "list":
 				reply = inventory.list();
+				break;
 			case "search":
 				reply = inventory.search(parts[1]);
+				break;
 			case "_":
 				break;
 			}
+			lastApplied++;
 		}
 		return reply;
 	}
 
 	public static Integer getTerm() {
 		return currentTerm;
+	}
+
+	public static Integer getLogTerm(int index) {
+		return log.get(index).term;
 	}
 	
 
